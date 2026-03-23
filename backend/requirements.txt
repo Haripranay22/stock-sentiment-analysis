@@ -1,0 +1,19 @@
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
+# Database
+sqlalchemy==2.0.30
+
+# Data fetching
+yfinance==0.2.38
+requests==2.32.3
+
+# Sentiment analysis
+nltk==3.8.1
+
+# Validation / serialization (pulled in by fastapi, pinned for stability)
+pydantic==2.7.1
+
+# Environment variables
+python-dotenv==1.0.1
