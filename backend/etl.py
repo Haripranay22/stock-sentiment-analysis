@@ -10,6 +10,9 @@ import os
 import logging
 from datetime import datetime, timedelta
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import requests
 import yfinance as yf
 from sqlalchemy.orm import Session
@@ -54,9 +57,7 @@ def seed_stocks(db: Session, tickers: list[dict] = DEFAULT_TICKERS):
 
 def fetch_prices(ticker: str, days: int = 30) -> list[dict]:
     """Download OHLCV data from Yahoo Finance."""
-    end = datetime.utcnow()
-    start = end - timedelta(days=days)
-    df = yf.download(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), progress=False)
+    df = yf.Ticker(ticker).history(period=f"{days}d")
     if df.empty:
         return []
 
@@ -69,7 +70,7 @@ def fetch_prices(ticker: str, days: int = 30) -> list[dict]:
             "low": float(row["Low"]),
             "close": float(row["Close"]),
             "volume": float(row["Volume"]),
-            "date": idx.to_pydatetime(),
+            "date": idx.to_pydatetime().replace(tzinfo=None),
         })
     return rows
 
