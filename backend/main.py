@@ -243,6 +243,125 @@ def dashboard(
     return result
 
 
+@app.get("/stocks/{ticker}/sentiment-history", tags=["Sentiment"])
+def get_sentiment_history(
+    ticker: str,
+    days: int = Query(30, ge=1, le=90),
+    db: Session = Depends(get_db),
+):
+    """Daily aggregated sentiment scores for a ticker — used for timeline charts."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    scores = (
+        db.query(SentimentScore, NewsArticle.published_at)
+        .join(NewsArticle, SentimentScore.article_id == NewsArticle.id)
+        .filter(
+            SentimentScore.ticker == ticker.upper(),
+            NewsArticle.published_at >= cutoff,
+        )
+        .all()
+    )
+
+    # Group by date
+    by_date: dict = {}
+    for score, published_at in scores:
+        if not published_at:
+            continue
+        day = published_at.strftime("%Y-%m-%d")
+        by_date.setdefault(day, []).append({"compound": score.compound, "label": score.label})
+
+    result = []
+    for day in sorted(by_date.keys()):
+        agg = aggregate_scores(by_date[day])
+        result.append({"date": day, **agg})
+    return result
+
+
+@app.get("/rankings", tags=["Rankings"])
+def get_rankings(
+    days: int = Query(7, ge=1, le=30),
+    db: Session = Depends(get_db),
+):
+    """All stocks sorted by compound sentiment score descending."""
+    stocks = db.query(Stock).all()
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    result = []
+
+    for stock in stocks:
+        scores = (
+            db.query(SentimentScore)
+            .join(NewsArticle, SentimentScore.article_id == NewsArticle.id)
+            .filter(
+                SentimentScore.ticker == stock.ticker,
+                NewsArticle.published_at >= cutoff,
+            )
+            .all()
+        )
+        raw = [{"compound": s.compound, "label": s.label} for s in scores]
+        summary = aggregate_scores(raw)
+
+        prev_price = (
+            db.query(StockPrice)
+            .filter(StockPrice.ticker == stock.ticker)
+            .order_by(StockPrice.date.desc())
+            .offset(1)
+            .first()
+        )
+        latest_price = (
+            db.query(StockPrice)
+            .filter(StockPrice.ticker == stock.ticker)
+            .order_by(StockPrice.date.desc())
+            .first()
+        )
+
+        change_pct = None
+        if latest_price and prev_price and prev_price.close:
+            change_pct = round((latest_price.close - prev_price.close) / prev_price.close * 100, 2)
+
+        result.append({
+            "ticker": stock.ticker,
+            "name": stock.name,
+            "sector": stock.sector,
+            "sentiment": summary,
+            "latest_close": latest_price.close if latest_price else None,
+            "change_pct": change_pct,
+        })
+
+    result.sort(key=lambda x: x["sentiment"]["compound"], reverse=True)
+    return result
+
+
+@app.get("/sectors", tags=["Sectors"])
+def get_sectors(
+    days: int = Query(7, ge=1, le=30),
+    db: Session = Depends(get_db),
+):
+    """Aggregate sentiment grouped by sector."""
+    stocks = db.query(Stock).all()
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    by_sector: dict = {}
+
+    for stock in stocks:
+        sector = stock.sector or "Other"
+        scores = (
+            db.query(SentimentScore)
+            .join(NewsArticle, SentimentScore.article_id == NewsArticle.id)
+            .filter(
+                SentimentScore.ticker == stock.ticker,
+                NewsArticle.published_at >= cutoff,
+            )
+            .all()
+        )
+        raw = [{"compound": s.compound, "label": s.label} for s in scores]
+        by_sector.setdefault(sector, []).extend(raw)
+
+    result = []
+    for sector, raw in by_sector.items():
+        agg = aggregate_scores(raw)
+        result.append({"sector": sector, **agg})
+    result.sort(key=lambda x: x["compound"], reverse=True)
+    return result
+
+
 @app.post("/etl/run", tags=["ETL"])
 def trigger_etl(request: ETLRequest, background_tasks: BackgroundTasks):
     """Kick off ETL as a background task."""
